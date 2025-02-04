@@ -1,5 +1,5 @@
 all: lab4.bin img/boot.img
-	dd if=img/boot.img of=boot.img conv=notrunc
+	dd if=img/boot.img of=boot.img
 	dd if=lab4.bin of=boot.img seek=1 bs=512 conv=notrunc
 lab4.o: lab4.S
 	cpp -o lab4.s lab4.S
