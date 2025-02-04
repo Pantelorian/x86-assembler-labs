@@ -1,101 +1,105 @@
-.code16
-.global _start
-
-.section .text
+.code16                     # Режим 16-битного кода (реальный режим x86)
+.global _start              # Глобальная метка начала программы
+.section .text              # Секция кода
 
 _start:
-    xorw %ax, %ax
-    movw %ax, %ds
-    movw %ax, %es
+    xorw %ax, %ax           # Обнуляем регистр AX
+    movw %ax, %ds           # Устанавливаем DS (данные сегмента) в 0
+    movw %ax, %es           # Устанавливаем ES (экстра сегмент) в 0
 
-    /* Вывод успешного чтения */
-    movw $hello_msg, %si
-    call print
+    /* Вывод сообщения о начале работы */
+    movw $hello_msg, %si    # Загружаем адрес сообщения в SI
+    call print              # Вызываем функцию вывода строки
 
     /* ============================= */
     /* Чтение 2 первых секторов с диска 0x00 */
     /* ============================= */
     movw $0x8000, %bx       # Буфер для данных (ES:BX = 0x0000:0x8000)
-    movb $0x00, %dl         # Первый жёсткий диск (DL = 0)
-    movb $0x02, %ah         # Функция чтения
-    movb $2, %al            # 2 сектора
-    movb $0, %ch            # Цилиндр 0
-    movb $1, %cl            # Сектор 1 (начальный)
-    movb $0, %dh            # Головка 0
-    int $0x13
-    jc error                # Обработка ошибки
+    movb $0x00, %dl         # Номер диска: первый диск (DL = 0)
+    movb $0x02, %ah         # AH = 0x02: Функция чтения секторов BIOS
+    movb $2, %al            # AL = 2: Читаем 2 сектора
+    movb $0, %ch            # CH = 0: Цилиндр 0
+    movb $1, %cl            # CL = 1: Начальный сектор (считается с 1)
+    movb $0, %dh            # DH = 0: Головка 0
+    int $0x13               # Вызов BIOS прерывания 0x13 для чтения секторов
+    jc error                # Если произошла ошибка (CF = 1), переходим к обработке ошибки
 
     /* Вывод успешного чтения */
-    movw $read_ok_msg, %si
-    call print
+    movw $read_ok_msg, %si  # Загружаем адрес сообщения об успехе в SI
+    call print              # Вызываем функцию вывода строки
 
     /* ============================== */
     /* Запись текста на диск */
     /* ============================== */
+
     /* Подготовка текста в буфере */
-    movw $text_data, %si
-    movw $0xc000, %di
-    movw $(text_end - text_data), %cx
-    rep movsb
+    movw $text_data, %si    # Источник данных (адрес текста)
+    movw $0xc000, %di       # Адрес назначения (буфер 0xc000)
+    movw $(text_end - text_data), %cx # Количество байт для копирования
+    rep movsb               # Копируем данные из источника в буфер
 
     /* Запись на диск */
-    movw $0xc000, %bx       # Источник данных
-    movb $0x00, %dl         # Первый диск (DL = 0)
-    movb $0x03, %ah         # Функция записи
-    movb $1, %al            # 1 сектор
-    movb $0, %ch            # Цилиндр 0
-    movb $3, %cl            # Сектор 1
-    movb $0, %dh            # Головка 0
-    int $0x13
-    jc error                # Обработка ошибки
+    movw $0xc000, %bx       # Буфер данных (ES:BX = 0x0000:0xc000)
+    movb $0x00, %dl         # Номер диска: первый диск (DL = 0)
+    movb $0x03, %ah         # AH = 0x03: Функция записи секторов BIOS
+    movb $1, %al            # AL = 1: Записываем 1 сектор
+    movb $0, %ch            # CH = 0: Цилиндр 0
+    movb $3, %cl            # CL = 3: Сектор 3 (считается с 1)
+    movb $0, %dh            # DH = 0: Головка 0
+    int $0x13               # Вызов BIOS прерывания 0x13 для записи секторов
+    jc error                # Если произошла ошибка (CF = 1), переходим к обработке ошибки
 
     /* Вывод успешной записи */
-    movw $write_ok_msg, %si
-    call print
+    movw $write_ok_msg, %si # Загружаем адрес сообщения об успехе в SI
+    call print              # Вызываем функцию вывода строки
 
     /* ============================== */
     /* Вывод текста, считанного с диска */
     /* ============================== */
-    movw $read_data_msg, %si
-    call print
+
+    movw $read_data_msg, %si # Загружаем адрес сообщения "Data read from disk" в SI
+    call print               # Вызываем функцию вывода строки
 
     /* Вывод первого сектора */
-    movw $0x8000, %si
-    call print
+    movw $0x8000, %si        # Загружаем адрес первого сектора (буфер 0x8000) в SI
+    call print               # Вызываем функцию вывода строки
 
     /* Перенос строки между секторами */
-    movw $newline_msg, %si
-    call print
+    movw $newline_msg, %si   # Загружаем адрес переноса строки в SI
+    call print               # Вызываем функцию вывода строки
 
     /* Вывод второго сектора */
-    movw $0x8200, %si
-    call print
+    movw $0x8200, %si        # Загружаем адрес второго сектора (буфер 0x8200) в SI
+    call print               # Вызываем функцию вывода строки
 
-    hlt
-loop: jmp loop
+    hlt                      # Остановка процессора
+loop: jmp loop              # Бесконечный цикл после завершения
+
 error:
-    movw $error_msg, %si
-    call print
-    hlt
+    movw $error_msg, %si     # Загружаем адрес сообщения об ошибке в SI
+    call print               # Вызываем функцию вывода строки
+    hlt                      # Остановка процессора
 
 /* Функция вывода строки */
 print:
-    lodsb
-    orb %al, %al
-    jz 1f
-    movb $0x0E, %ah
-    int $0x10
-    jmp print
-1:  ret
+    lodsb                    # Загружаем байт из [SI] в AL и увеличиваем SI
+    orb %al, %al             # Проверяем, является ли AL нулевым (конец строки)
+    jz 1f                    # Если да, завершаем вывод
+    movb $0x0E, %ah          # AH = 0x0E: Функция вывода символа BIOS
+    int $0x10                # Вызов BIOS прерывания 0x10 для вывода символа
+    jmp print                # Повторяем для следующего символа
+1:  ret                      # Возвращаемся к вызывающему коду
 
-.data
+.section .data              # Секция данных
+
 /* Текстовые сообщения */
-read_ok_msg:    .asciz "Read 2 sectors: OK\r\n"
-write_ok_msg:   .asciz "Write 1 sector: OK\r\n"
-read_data_msg:  .asciz "\r\nData read from disk:\r\n"
-error_msg:      .asciz "Error!\r\n"
-newline_msg:    .asciz "\r\n"  # Перенос строки
-hello_msg:      .asciz "Starting reading data from fda\r\n"
+read_ok_msg:    .asciz "Read 2 sectors: OK\r\n"      # Сообщение об успешном чтении
+write_ok_msg:   .asciz "Write 1 sector: OK\r\n"      # Сообщение об успешной записи
+read_data_msg:  .asciz "\r\nData read from disk:\r\n" # Сообщение перед данными с диска
+error_msg:      .asciz "Error!\r\n"                  # Сообщение об ошибке
+newline_msg:    .asciz "\r\n"                       # Перенос строки
+hello_msg:      .asciz "Starting reading data from fda\r\n" # Приветственное сообщение
+
 /* Данные для записи на диск */
-text_data:      .asciz "Hello from X86\r\n"
-text_end:
+text_data:      .asciz "Hello from X86\r\n"          # Текст для записи на диск
+text_end:                               # Конец данных
