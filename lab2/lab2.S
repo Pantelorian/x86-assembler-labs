@@ -1,13 +1,17 @@
-#define EXEC_ONLY 0x8
-#define EXEC_READ 0xA
-#define READ_ONLY 0x0
-#define READ_WRITE 0x2
-#define G_BYTE 0x0
-#define G_PAGE 0x80
-#define SEG_16 0x0
-#define SEG_32 0x40
-#define STACK_SIZE 0x10
+#define EXEC_ONLY 0x8                     // сегмент кода, только чтение
+#define EXEC_READ 0xA                     // сегмент кода, чтение и исполнение
+#define READ_ONLY 0x0                     // сегмент данных, только чтение
+#define READ_WRITE 0x2                    // сегмент данных, чтение и запись
+#define G_BYTE 0x0                        // байтовая гранулярность
+#define G_PAGE 0x80                       // страничная гранулярность
+#define SEG_16 0x0                        // 16-разрядный сегмент
+#define SEG_32 0x40                       // 32-разрядный сегмент
 
+#define STACK_SIZE 0x10                   // размер стека
+/*
+   Макроопределение в С-стиле. Создает дескриптор с заданными параметрами
+   base, limit, type, attr. Для задания типа использовать макроопределения выше.
+*/
 #define descr(base, limit, type, attr) \
   .word (limit & 0xFFFF); \
   .word (base & 0xFFFF); \
@@ -16,133 +20,211 @@
   .byte (attr | ((limit >> 16) & 0xF)); \
   .byte ((base >> 24) & 0xFF)
 
+/**********************************************************************************
+  Компоновщик GNU ld умеет работать только с моделью памяи FLAT.
+  Для прямой адресации использовать следующие макросы.
+*/
 #define CS_OFF(label) (label - _start)
 #define DS_OFF(label) (label - .data)
 
+/**********************************************************************************
+  Процессор загружает первый сектор диска (512 байт) по адресу 0x0:0x7C00
+  и передает на него управление: ip = 0x7C00.
+  Процессор находится в реальном режиме.
+
+  Значения сегментных регистров:
+  cs = 0x0    ds = 0x0    es = 0x0
+  ss = 0x0    fs = 0x0    gs = 0x0
+*/
+
+/******************** Начало секции Кода *******************/
 .text
-.code16
+.code16                                 // указание ассемблеру генерировать 16-разрядный код
 
 
 .global _start
 _start:
-  movw $0x3, %ax
-  int $0x10
+  movw $0x3, %ax                        // очистка экрана: задаем режим видеоадаптера (80x25, 16-цветный)
+  int $0x10                             // используем 0x10 прерывание BIOS (ah = 0, al = 3)
   movw $.data, %ax
-  movw $seg_data, %bx
+  movw $seg_data, %bx                   // записываем базовый адрес семента данных в соответствующий дескриптор
   movw %ax, 2(%bx)
-  movw $.stack, %ax
+  movw $.stack, %ax                     // записываем базовый адрес сегмента стека в соответствующий дескриптор
   movw $seg_stack, %bx
-  movw %ax, 2(%bx)
-  cli
+  movw %ax, 2(%bx)                      // (для кода и видеобуфера базовые адреса известны)
+  cli                                   // запрещаем аппаратные прерывания
   movb $0x80, %al
-  outb %al, $0x70
-  inb $0x92, %al
+  outb %al, $0x70                       // запрещаем NMI (немаскируемые прерывания)
+  inb $0x92, %al                        // включаем А20 адресную линию
   orb $0x2, %al
   outb %al, $0x92
-  lgdt gdtdesc
+  lgdt gdtdesc                          // загружаем значение GDTR
   movl %cr0, %eax
   orl $1, %eax
-  movl %eax, %cr0
-  ljmp $0x8, $CS_OFF(goto_prot)
-
-.code32
+  movl %eax, %cr0                       // устанавливаем бит PE в регистре CR0 --------+
+                                        //  Эти инструкции должны выполняться      <-- | --> непосредственно друг за другом
+  ljmp $0x8, $CS_OFF(goto_prot)         // переходим в новый сегмент кода (cs, ip) ----+
+/**********************************************************************************
+  Теперь процессор работает в защищенном режиме
+*/
+.code32                                 // указание процессору генерировать 32-разрядный код
 goto_prot:
   movw $0x10, %ax
-  movw %ax, %ds
+  movw %ax, %ds                         // загружаем новый селектор сегмента данных
   movw $0x18, %ax
-  movw %ax, %ss
-  movl $STACK_SIZE, %esp
+  movw %ax, %ss				// загружаем новый селектор сегмента стека
+  movl $STACK_SIZE, %esp		// устанавливаем указатель стека на значение на значение "дна" стека
   movw $0x20, %ax
-  movw %ax, %es
-  
-  movl $320, %ebx
-  movl $110, %ecx
-  movw %ds:DS_OFF(symbol), %ax
+  movw %ax, %es				// загружаем селектор сегмента видеобуфера
+
+# Обращение за пределы GDT
+#	movw $0x30, %ax
+#	movw %ax, %gs
+
+# Декриптор кода в сегмент данных
+#	movw $0x8, %ax
+#	movw %ax, %ds
+
+/* Протестируем запись символов ascii в видеопамять */
+
+  movl $320, %ebx			// начальное смещение на экране
+  movl $110, %ecx			// число выводимых символов
+  movw %ds:DS_OFF(symbol), %ax		// загружаем начальный символ с атрибутом (обращение к сегменту данных!)
 print_pm:
-  movw %ax, %es:(%ebx)
-  addl $2, %ebx
-  incw %ax
-  pushl %ecx
-  movl $0xFFFFFF, %ecx
+  movw %ax, %es:(%ebx)			// записываем очередной символ в видеопамять (обращение к сегменту видеопамяти!)
+  addl $2, %ebx				// смещаемся в видеобуфере
+  incw %ax				// код следующего символа
+  pushl %ecx				// сохраняем ecx в стеке (обращение к сегменту стека!)
+  movl $0xFFFFFF, %ecx			// добавим паузу для наглядности
 idle:
   nop
-  loop idle
-  popl %ecx
-  loop print_pm
+  loop idle				// цикл паузы
+  popl %ecx				// возвращаем ecx из стека
+  loop print_pm				// цикл вывода на экран
 
-  movw $0xFFFF, %ds:DS_OFF(seg_text)
-  movb $0, %ds:DS_OFF(seg_text) + 6
-  orb $EXEC_READ, %ds:DS_OFF(seg_text) + 5
-  movw $0xFFFF, %ds:DS_OFF(seg_data)
-  movb $0, %ds:DS_OFF(seg_data) + 6
-  orb $READ_WRITE, %ds:DS_OFF(seg_data) + 5
-  movw $0xFFFF, %ds:DS_OFF(seg_stack)
-  movb $0, %ds:DS_OFF(seg_stack) + 6
-  orb $READ_WRITE, %ds:DS_OFF(seg_stack) + 5
-  movw $0xFFFF, %ds:DS_OFF(seg_videomem)
-  movb $0, %ds:DS_OFF(seg_videomem) + 6
-  orb $READ_WRITE, %ds:DS_OFF(seg_videomem) + 5
-  movw $0x10, %ax
-  movw %ax, %ds
-  movw $0x18, %ax
-  movw %ax, %ss
-  movw $0x20, %ax
-  movw %ax, %es
-  ljmp $0x8, $CS_OFF(goto_64k_segment)
 
-goto_64k_segment:
-  .code16
-  movl %cr0, %eax
-  andl $0xFFFFFFFE, %eax
-  movl %eax, %cr0
-  ljmp $0x7C0, $CS_OFF(goto_real)
-
-goto_real:
-  movw $.data, %ax
-  shrw $4, %ax
-  movw %ax, %ds
-  movw %ax, %es
-  movw $.stack, %ax
-  shrw $4, %ax
-  movw %ax, %ss
-  sti
-  movb $0, %al
-  outb %al, $0x70
+/* ФУНКЦИИ ДОС
   movb $0x0E, %ah
   xorw %bx, %bx
   movw $DS_OFF(mesg), %si
-print_rm:
+print_dos:
   movb (%si), %al
   cmpb $0, %al
   je hang
   inc %si
   int $0x10
+  loop print_dos
+*/
+
+/* Подготовим переход в реальный режим. Сперва надо сформировать дескрипторы для реального режима.
+   Для этого модифицируем соответствующие дескрипторы в GDT
+*/
+  movw $0xFFFF, %ds:DS_OFF(seg_text)		// требуется сегмент кода с лимитом 64k
+  movb $0, %ds:DS_OFF(seg_text) + 6
+  orb $EXEC_READ, %ds:DS_OFF(seg_text) + 5	// и доступный для чтения
+
+						// Для остальных сегментов требования следующие
+  movw $0xFFFF, %ds:DS_OFF(seg_data)		// 	Limit = 64k (0xFFFF)
+  movb $0, %ds:DS_OFF(seg_data) + 6		// 	Byte granularity (G = 0)
+  orb $READ_WRITE, %ds:DS_OFF(seg_data) + 5	// 	Expand up (E = 0)
+						// 	Writable (W = 1)
+  movw $0xFFFF, %ds:DS_OFF(seg_stack)		// 	Present (P = 1)
+  movb $0, %ds:DS_OFF(seg_stack) + 6
+  orb $READ_WRITE, %ds:DS_OFF(seg_stack) + 5
+
+  movw $0xFFFF, %ds:DS_OFF(seg_videomem)
+  movb $0, %ds:DS_OFF(seg_videomem) + 6
+  orb $READ_WRITE, %ds:DS_OFF(seg_videomem) + 5
+
+  movw $0x10, %ax			// загрузим теневые регистры сегментов
+  movw %ax, %ds
+  movw $0x18, %ax
+  movw %ax, %ss
+  movw $0x20, %ax
+  movw %ax, %es
+
+  ljmp $0x8, $CS_OFF(goto_64k_segment)	// выполним дальний переход, чтобы снова загрузить селектор
+					// в CS и модифицировать его теневой регистр
+
+goto_64k_segment:
+
+  .code16				// снова генерируем 16-разрядный код
+  movl %cr0, %eax
+  andl $0xFFFFFFFE, %eax
+  movl %eax, %cr0			// сбросим бит PE в регистре CR0
+
+  ljmp $0x7C0, $CS_OFF(goto_real)	// переходим в реальный режим
+
+/*---------------------------------------------------------------------------------
+ 	Теперь процессор снова работает в реальном режиме
+*/
+
+goto_real:
+  movw $.data, %ax			// возвращаем значения сегментный регистров реального режима
+  shrw $4, %ax
+  movw %ax, %ds
+  movw %ax, %es
+  movw $.stack, %ax
+  shrw $4, %ax
+  movw %ax, %ss
+
+  sti					// разрешим аппаратные и немаскируемые прерывания
+  movb $0, %al
+  outb %al, $0x70
+
+/* Проверяем работоспособность сервиса BIOS */
+
+  movb $0x0E, %ah			// вывод символа в режиме телетайпа (атрибут текущий):
+  xorw %bx, %bx				// 0-ая страница видеопамяти
+
+  movw $DS_OFF(mesg), %si		// смещение строки символов в регистр si
+
+print_rm:
+  movb (%si), %al
+  cmpb $0, %al				// пока не встретился '\0'
+  je hang
+  inc %si
+  int $0x10				// выводим символы строки на экран
   loop print_rm
+
 hang:
-  jmp hang
+  jmp hang				// зацикливание
 
-text_size = . - _start
+text_size = . - _start 			// размер секции кода
 
+/********************** Начало секции Данных ***********************/
 .data
-.align 16
+
+/*---------------------------------------------------------------------------------
+ 	Глобальная таблица дескрипторов
+*/
+.align 16								// процессор быстрее обращается с выровненной таблицей
 GDT:
-seg_null: .quad 0
-seg_text: descr (0x7c00, (text_size - 1), EXEC_READ, G_BYTE | SEG_32)
-seg_data: descr (0, (data_size - 1), READ_WRITE, G_BYTE | SEG_32)
-seg_stack: descr (0, (stack_size - 1), READ_WRITE, G_BYTE | SEG_32)
-seg_videomem: descr (0xB8000, 0xFFF, READ_WRITE, G_BYTE | SEG_32)
+seg_null: .quad 0							// нулевой дескриптор
+seg_text: descr (0x7C00, (text_size - 1), EXEC_READ, G_BYTE | SEG_32)	// дескриптор сегмента кода 	(селектор 0x0)
+seg_data: descr (0, (data_size - 1), READ_WRITE, G_BYTE | SEG_32)	// дескриптор сегмента данных	(селектор 0x10)
+seg_stack: descr (0, (stack_size - 1), READ_WRITE, G_BYTE | SEG_32)	// дескриптор сегмента стека	(селектор 0x18)
+seg_videomem: descr (0xB8000, 0xFFF, READ_WRITE, G_BYTE | SEG_32)	// дескриптор видеобуфера	(селектор 0x20)
 GDT_size = . - GDT
 
-gdtdesc:  .word GDT_size - 1
-         .long GDT
-symbol:   .byte 1
-sym_attr: .byte 0x1e
-mesg:     .asciz "Back to real mode!!!!"
+/*-------------------------------------------------------------------------------*/
 
-data_size = . - .data
+gdtdesc:  .word GDT_size - 1		// предел GDT
+         .long GDT			// базовый адрес GDT
+
+symbol:   .byte 1			// начальный код символа для вывода на экран в защищенном режиме
+sym_attr: .byte 0x1e			// атрибут символа
+
+mesg:     .asciz "Back to real mode!!!"	// сообщение при возращении в реальный режим
+
+data_size = . - .data			// размер секции данных
+
+/************************* Секция Стека ***********************/
 
 .section .stack, "wa"
 .align 16
-.space STACK_SIZE, '^'
-stack_size = . - .stack
+
+.space STACK_SIZE, '^'			// выделим место под стек и заполним его символом '^'
+
+stack_size = . - .stack			// размер секции стека
 
