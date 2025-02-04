@@ -1,1 +1,1 @@
-*.s *.bin *.img *.elf
+*.o *.s *.bin *.img *.elf
