@@ -1,9 +1,10 @@
-# 0 "lab2.S"
-# 0 "<built-in>"
-# 0 "<command-line>"
-# 1 "/nix/store/lw21wr626v5sdcaxxkv2k4zf1121hfc9-glibc-2.40-36-dev/include/stdc-predef.h" 1 3 4
-# 0 "<command-line>" 2
 # 1 "lab2.S"
+# 1 "<built-in>" 1
+# 1 "<built-in>" 3
+# 390 "<built-in>" 3
+# 1 "<command line>" 1
+# 1 "<built-in>" 2
+# 1 "lab2.S" 2
 # 41 "lab2.S"
 .text
 .code16
@@ -44,13 +45,13 @@ goto_prot:
   movw $0x20, %ax
   movw %ax, %es
 
-# Обращение за пределы GDT
-# movw $0x30, %ax
-# movw %ax, %gs
+ # Обращение за пределы GDT
+ # movw $0x30, %ax
+ # movw %ax, %gs
 
-# Декриптор кода в сегмент данных
-# movw $0x8, %ax
-# movw %ax, %ds
+ # Декриптор кода в сегмент данных
+ # movw $0x8, %ax
+ # movw %ax, %ds
 
 
 
