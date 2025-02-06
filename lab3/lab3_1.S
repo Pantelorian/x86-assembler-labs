@@ -1,6 +1,5 @@
 #include "gdt.h"
 #include "idt.h"
-#include "irq.h"
 
 #define CS  0x8                 // селектор сегмента кода
 #define DS  0x10                // селектор сегмента данных
@@ -12,9 +11,6 @@
 #define SCREEN_ROWS 25
 #define SCREEN_COLS 80
 #define MAX_COLS    60
-
-#define TIMER_ROW   1
-#define TIMER_COL   65
 
 /*------------------------------------------------------
     Загрузчик первой стадии (GRUB) загружает образ программы начиная со 2 селектора
@@ -29,7 +25,6 @@
 
 .code16
 .text
-#.org 0x8000
 
 .global _start
 _start:
@@ -69,73 +64,46 @@ goto_prot:
     movw    $ES, %ax
     movw    %ax, %es                    // загружаем селектор сегмента видеобуфера
 
-    call    init_pic                    // инициализация контроллеров прерываний
 
-    movb    $0, %al                     // разрешаем немаскируемые прерывания
-    outb    %al, $0x70
-    sti                                 // разрешаем прерывания
+/*---------------------------------------- Генерируем исключения ----------------------------------------*/
 
-    movw    $320, %bx                   // начальное смещение на экране
-    movw    $110, %cx                   // число выводимых символов
-    movw    $0x1e01, %ax                // загружаем начальный символ с атрибутом
 
-screen:
-    movw    %ax, %es:(%bx)          // записываем очередной символ в видеопамять
-    addw    $2, %bx                 // смещаемся в видеобуфере
-    incw    %ax                     // код следующего символа
-    pushw   %cx                     // сохраняем cx
-    movl    $0x0FFFFF, %ecx         // добавим паузу для наглядности
+    xorl    %ebx, %ebx
+    divl    %ebx
 
-pause:
-    nop
-    loop    pause       // цикл паузы
-    popw    %cx         // возвращаем cx
-    loop    screen      // цикл вывода на экран
 
-    int $0x80
+/*
+    pushf
+    popl    %eax
+    orl     $0x100, %eax
+    pushl   %eax
+    popf
+*/
+
+//  int3
+
+/*
+    movl    $DS_OFF(seg_edata), %ebx
+    movb    5(%ebx), %al
+    andb    $0x7f, %al
+    movb    %al, 5(%ebx)
+    movw    $0x28, %ax
+    movw    %ax, %gs
+*/
+
+/*
+    movw    $0x38, %ax
+    movw    %ax, %gs
+*/
+
+/*
+    popl    %eax
+    popl    %eax
+    popl    %eax
+*/
 
 hang:
-    nop
     jmp     hang        // зацикливание
-
-init_pic:
-    pushw   %ax
-
-    movb    $(ICW1_INIT | ICW1_ICW4_NEEDED), %al    // запись 1-ого слова инициализации в регистр команд
-    outb    %al, $MASTER_PIC_COMMAND
-    nop
-    outb    %al, $SLAVE_PIC_COMMAND
-    nop
-
-    movb    $ICW2_MASTER_BASE_VECTOR, %al       // запись базового вектора прерываний для обоих контрллеров
-    outb    %al, $MASTER_PIC_DATA
-    nop
-    movb    $ICW2_SLAVE_BASE_VECTOR, %al
-    outb    %al, $SLAVE_PIC_DATA
-    nop
-
-    movb    $ICW3_MASTER, %al           // указание линии IRQ, к которой подключен SLAVE-контроллер
-    outb    %al, $MASTER_PIC_DATA
-    nop
-    movb    $ICW3_SLAVE, %al            // указываем номер SLAVE-контроллера в каскаде
-    outb    %al, $SLAVE_PIC_DATA
-    nop
-
-    movb    $ICW4_8086_MODE, %al        // запись последнего слова инициализации
-    outb    %al, $MASTER_PIC_COMMAND
-    nop
-    outb    %al, $SLAVE_PIC_COMMAND
-    nop
-
-    movb    $(IRQ2|IRQ3|IRQ4|IRQ5|IRQ6|IRQ7), %al   // инициализация регистров маски обоих контроллеров
-    outb    %al, $MASTER_PIC_DATA
-
-    movb    $(IRQ0|IRQ1|IRQ2|IRQ3|IRQ4|IRQ5|IRQ6|IRQ7), %al
-    outb    %al, $SLAVE_PIC_DATA
-
-    popw    %ax
-    ret
-
 /*------------------------------------------------------
     Процедуры обработки исключений. Для каждого исключения выводится символическая
     строка с его названием и значение регистра SP. Для некоторых исключений
@@ -299,23 +267,6 @@ dummy_handler:
 0:
     jmp     0b
 
-trap_handler:
-    movw    $640, %bx
-    movw    $110, %cx
-    movw    $0x2f01, %ax
-0:
-    movw    %ax, %es:(%bx)
-    addw    $2, %bx
-    incw    %ax
-    pushw   %cx
-    movl    $0x0FFFF, %ecx
-1:
-    nop
-    loop    1b
-    popw    %cx
-    loop    0b
-
-    iret
 /*------------------------------------------------------
     Процедуры вывода на экран строк и чисел. Реализовано простейшее управление терминалом с
     экраном 80x25 символов. Можно задать правую границу области вывода. При заполнении
@@ -368,68 +319,6 @@ skip_lf:
 scroll_screen:
     nop
     ret
-
-/*------------------------------------------------------
-    Процедуры обработки аппаратных прерываний
--------------------------------------------------------*/
-
-timer_ISR:
-    pushl   %eax
-    pushl   %esi
-
-    xorl    %eax, %eax
-
-    cmpw    $18, %ds:DS_OFF(timer_ticks)    // если количество тиков превысило 18 (секунда)
-    jle     skip
-    movw    $0, %ds:DS_OFF(timer_ticks)     // обнуляем счетчик тиков
-    incw    %ds:DS_OFF(timer_sec)           // увеличиваем счетчик секунд
-    movw    %ds:DS_OFF(timer_sec), %ax
-    call    print_time                      // выводим количество секунд на экран
-skip:
-    incw    %ds:DS_OFF(timer_ticks)         // увеличиваем счетчик тиков
-    movb    $EOI, %al
-    outb    %al, $MASTER_PIC_COMMAND        // выдаем команду окончания обработки прерывания
-    popl    %eax
-    popl    %esi
-    iret
-
-keyboard_ISR:
-    pushl   %eax
-    pushl   %esi
-
-    sti
-
-    pushl   %ecx
-    movl    $0x7FFFFFF, %ecx
-
-0:
-    nop
-    loop    0b
-    popl    %ecx
-
-    xorl    %eax, %eax
-    xorl    %esi, %esi
-
-    inb     $0x60, %al                      // считываем полученный скан-код
-
-    movl    $DS_OFF(keymap), %esi           // получаем соответствующий ему код символа
-    movb    (%esi, %eax), %al               // по таблице скан-кодов
-    movb    $0x7, %ah
-    call    putchar                         // выводим его на экран
-
-    inb     $0x61, %al                      // установкой старшего бита и последующим его сбросом
-    orb     $0x80, %al
-    outb    %al, $0x61                      // сообщим контроллеру клавиатуры о приеме кода символа
-    andb    $0x7f, %al
-    outb    %al, $0x61
-
-    movb    $EOI, %al
-    outb    %al, $MASTER_PIC_COMMAND        // выдаем команду окончания обработки прерывания
-
-    popl    %esi
-    popl    %eax
-
-    iret
 
 /*  Функция вывода символьной строки на экран.
     Параметры: esi - адрес строки. Строка должна заканчиваться нулем '\0'
@@ -497,60 +386,6 @@ print_hex:
 
     ret
 
-print_time:
-    pushl   %eax
-    pushl   %ebx
-    pushl   %ecx
-    pushl   %edi
-
-    movl    $TIMER_COL, %edi
-    xorl    %ecx, %ecx
-0:
-    movl    %eax, %ebx
-    andl    $0xF, %ebx
-    pushw   %bx
-    incl    %ecx
-    shrl    $4, %eax
-    cmpl    $0, %eax
-    jne     0b
-1:
-    cmpl    $0, %ecx
-    je      4f
-    popw    %ax
-    cmpw    $10, %ax
-    jl      2f
-    subw    $10, %ax
-    addw    $'A', %ax
-    jmp     3f
-2:
-    addw    $'0', %ax
-3:
-    movb    $0x7, %ah
-    call    put_time
-    decl    %ecx
-    jmp     1b
-4:
-    popl    %edi
-    popl    %ecx
-    popl    %ebx
-    popl    %eax
-
-    ret
-put_time:
-    pushl   %eax
-    pushl   %ebx
-
-    movw    $TIMER_ROW, %bx
-    imulw   $SCREEN_COLS, %bx
-    addw    %di, %bx
-    imulw   $2, %bx
-    movw    %ax, %es:(%bx)
-    incw    %di
-
-    popl    %ebx
-    popl    %eax
-    ret
-
 text_size = . - _start
 
 /*---------------------------------------- Начало секции данных ----------------------------------------*/
@@ -597,18 +432,9 @@ IDT:
     trap_gate   (CS, CS_OFF(dummy_handler))             // 18       #MC         Проверка оборудования               Abort       Нет
     trap_gate   (CS, CS_OFF(dummy_handler))             // 19       #XM         Исключение плавающей точки в SIMD   Fault       Нет
 
-    .rept   44                                          // 20-31    -           Зарезервировано (не использовать )
+    .rept   12                                          // 20-31    -           Зарезервировано (не использовать )
     null_descr
     .endr
-/*---------------------------------------- Аппаратные прерывания ----------------------------------------*/
-
-    interrupt_gate  (CS, CS_OFF(timer_ISR))
-    interrupt_gate  (CS, CS_OFF(keyboard_ISR))
-    .rept   62
-    null_descr
-    .endr
-/*---------------------------------------- Аппаратные прерывания ----------------------------------------*/
-    interrupt_gate  (CS, CS_OFF(trap_handler))
 IDT_size = . - IDT
 
 idtdesc:    .word   IDT_size - 1    // предел IDT
@@ -628,15 +454,10 @@ mesg_SS:    .asciz  "Stack-Segment Fault! SP = "
 mesg_GP:    .asciz  "General Protection Fault! SP = "
 mesg_PF:    .asciz  "Page Fault! SP = "
 mesg_NH:    .asciz  "Exception is not handled!!! SP = "
-mesg_time:  .asciz  "TIMER"
-keymap:     .asciz  "\000\0001234567890-=\b\tqwertyuiop[]\n\000asdfghjkl;\'`\000\\zxcvbnm,./\000*\000 `"
 
 /*  Текущая позиция на экране */
 cur_row:    .word   0               // текущая строка
 cur_col:    .word   0               // текущий столбец
-
-timer_ticks: .word   0
-timer_sec:  .word   0
 
 data_size = . - .data               // размер секции данных
 
