@@ -399,6 +399,7 @@ keyboard_ISR:
 
     sti
 
+   /* Задержка
     pushl   %ecx
     movl    $0x7FFFFFF, %ecx
 
@@ -406,7 +407,7 @@ keyboard_ISR:
     nop
     loop    0b
     popl    %ecx
-
+*/
     xorl    %eax, %eax
     xorl    %esi, %esi
 
