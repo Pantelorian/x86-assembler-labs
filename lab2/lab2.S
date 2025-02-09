@@ -103,6 +103,10 @@ idle:
   loop print_pm				// цикл вывода на экран
 
 
+
+stop:
+jmp stop
+
 /* ФУНКЦИИ ДОС
   movb $0x0E, %ah
   xorw %bx, %bx
