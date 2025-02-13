@@ -9,10 +9,22 @@ _start:
     movw %ax, %es
 
     movw $0x8000, %bx       # Буфер для данных (ES:BX = 0x0000:0x8000)
-    movb $0x00, %dl         # Первый жёсткий диск (DL = 0)
+    movb $0x08, %ah         # Функция 08h: Read Drive Parameters
+    movb $0x80, %dl         # Первый жёсткий диск (DL = 80)
+
+    int $0x13
+
+    andb $0x3F, %cl
+    sub $0x01, %cl
+    movw %cx, %ax
+    movw $0x8000, %bx       # Буфер для данных (ES:BX = 0x0000:0x8000)
+
+    movb $0x80, %dl         # Первый жёсткий диск (DL = 80)
+
     movb $2, %cl            # Начинаем с сектора 2 (CL хранит номер сектора)
 
 load_sectors:
+    pushw %ax
     movb $0x02, %ah         # Функция чтения
     movb $1, %al            # Читаем 1 сектор за раз
     movb $0, %ch            # Цилиндр 0
@@ -26,13 +38,19 @@ load_sectors:
 
     addw $512, %bx          # Сдвигаем буфер на 512 байт
     incb %cl                # Увеличиваем номер сектора
-    cmpb $9, %cl            # Проверяем, загрузили ли мы 4 сектора (2-5)
+    popw %ax
+    cmpb %al, %cl            # Проверяем, загрузили ли мы все секторы
     jl load_sectors
 
+long_jmp:
     ljmp $0x0000, $0x8000   # Переход к загруженному коду
 
 disk_error:
-    # Вывод сообщения об ошибке
+# Смотрим на ah, если ah=12, то дальний переход на 0x8000, иначе ошибка 
+    
+    cmpb $12, %ah
+    je long_jmp
+
     movw $error_msg, %si    # Загружаем адрес сообщения об ошибке в SI
     call print_string
     hlt                     # Остановка процессора
