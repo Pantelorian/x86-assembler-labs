@@ -17,6 +17,8 @@
 3 лаба make clean; make 1 или make 2 в зависимости от выполняемой части(исключения или прерывания)
 
 ## Запуск проекта
+1 лаба qemu-system-i386 -hdb boot.img -hda disk_device, для отладки с gdb добавить -s -S
+
 qemu-system-i386 -hda boot.img, для отладки с gdb добавить -s -S
 
 ## Необходимое ПО:
